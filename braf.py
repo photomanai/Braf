@@ -49,7 +49,7 @@ class Force:
     def __init__(self, url, word_list_path):
         self.url = url
         self.word_list_path = word_list_path
-        self.status_code = [200, 201, 204, 301, 302, 307, 401, 403]
+        self.status_codes = [200, 201, 204, 301, 302, 307, 401, 403]
         self.normalize_url()
 
     def normalize_url(self):
@@ -87,13 +87,15 @@ class Force:
                 fu = urljoin(self.url, payload)
                 print(fu)
                 r = requests.get(fu, timeout=5)
-                if self.status_code in r.status_code or len(r.text) > 320:
+                print(r.status_code)
+                print(self.status_codes)
+                if r.status_code in self.status_codes or len(r.text) > 320:
                     print(f"[+] VULN!: {payload}")
                     print(f"    length: {len(r.text)} | Status: {r.status_code}")
                 else:
                     print(f"[-] Code: {r.status_code}")
             except Exception as e:
-                print(f"[!]ERROR: {e}")
+                print(f"[!] ERROR: {e}")
 
 
 def main():
