@@ -5,6 +5,7 @@ import sys
 import os
 import argparse
 from urllib.parse import urljoin, urlparse
+from concurrent.futures import ThreadPoolExecutor
 
 def GetUserInput():
     defaultWordListPath = os.path.join(os.getcwd(), "payloads/common.txt")
@@ -74,28 +75,38 @@ class Force:
             except Exception as e:
                 print(f"[!]ERROR: {e}")
 
+    def check(self, url,payload):
+        fu = urljoin(self.url, payload)
+        try:
+            r = requests.get(fu, timeout=7, allow_redirects=True)
+            if r.status_code in self.status_codes:
+               print(f"[+] {r.status_code} {len(r.text):>6} → {fu}")
+        except:
+            pass
+
+
     def dir_brute(self):
         with open(self.word_list_path, "r") as f:
             payloads = [line.strip() for line in f if line.strip()]
 
         print(f"[+] Payload lines: {len(payloads)}")
 
+        with ThreadPoolExecutor(max_workers=100) as executor:
+            executor.map(lambda p: self.check(self.url, p), payloads)
         # os.path.join(os.getcwd(), "payloads/common.txt")
-        for payload in payloads:
-            try:
-                # fu = f"{self.url}/{payload}"
-                fu = urljoin(self.url, payload)
-                print(fu)
-                r = requests.get(fu, timeout=5)
-                print(r.status_code)
-                print(self.status_codes)
-                if r.status_code in self.status_codes or len(r.text) > 320:
-                    print(f"[+] VULN!: {payload}")
-                    print(f"    length: {len(r.text)} | Status: {r.status_code}")
-                else:
-                    print(f"[-] Code: {r.status_code}")
-            except Exception as e:
-                print(f"[!] ERROR: {e}")
+        # for payload in payloads:
+        #     try:
+        #         # fu = f"{self.url}/{payload}"
+        #         fu = urljoin(self.url, payload)
+        #         r = requests.get(fu, timeout=5)
+        #         if r.status_code in self.status_codes:
+        #             print(f"[+] {r.status_code} - {fu}")
+        #             # print(f"    length: {len(r.text)} | Status: {r.status_code}")
+        #         else:
+        #             pass
+        #             # print(f"[-] Code: {r.status_code}")
+        #     except Exception as e:
+        #         print(f"[!] ERROR: {e}")
 
 
 def main():
