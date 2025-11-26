@@ -1,41 +1,38 @@
-# BruteForce Tool for dir Search/LFI
-
 import requests
 import sys
 import os
 import argparse
 from urllib.parse import urljoin, urlparse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 def GetUserInput():
     defaultWordListPath = os.path.join(os.getcwd(), "payloads/common.txt")
     parser = argparse.ArgumentParser(
-        description="bref.py - Works with url and optional parameters"
+        description="bref.py - Optimized Directory & LFI Brute Force Tool"
     )
 
-    parser.add_argument("-u", "--url", type=str,required=True, help="url to brute")
-
-    # parser.add_argument("-t", "--test", type=str, help="Test message", default=None)
-
-    parser.add_argument("-y", action="store_true", help="Enable aggressive mode")
-    parser.add_argument("-v", action="store_true", help="Enable verbose")
+    parser.add_argument("-u", "--url", type=str, required=True, help="Target URL")
+    parser.add_argument("-y", action="store_true", help="Enable aggressive mode (verify=False)")
+    parser.add_argument("-v", action="store_true", help="Enable verbose output")
     parser.add_argument(
-        "-w",
-        "--wordlist",
+        "-w", "--wordlist",
         metavar="PATH",
         default=defaultWordListPath,
-        help=f"word list directory (default: {defaultWordListPath}",
+        help=f"Wordlist path (default: {defaultWordListPath})",
     )
     parser.add_argument(
-        "-T",
-        "--speed",
+        "-T", "--speed",
         type=int,
         choices=range(1, 6),
         default=2,
         metavar="LEVEL",
-        help="Speed level: 0‑5 (default: %(default)s)",
+        help="Speed level: 1-5 (default: 2)",
     )
-    parser.add_argument("-A", "--attackType", type=str, default="dir", help="Choose Your Attack Type: dir, lfi (default: dir)")
+    parser.add_argument("-A", "--attackType", type=str, default="dir", choices=["dir", "lfi"], help="Attack Type: dir, lfi (default: dir)")
+    
     args = parser.parse_args()
 
     return {
@@ -43,94 +40,98 @@ def GetUserInput():
         "aggressiveMode": args.y,
         "wordListPath": args.wordlist,
         "speed": args.speed,
-        "type": args.attackType,
+        "type": args.attackType.lower(),
         "verbose": args.v
     }
-        # "testMessage": args.test,
-
-
 
 class Force:
-    def __init__(self, url, word_list_path, userArgs):
-        self.url = url
-        self.word_list_path = word_list_path
-        self.status_codes = [200, 201, 204, 301, 302, 307, 401, 403]
+    def __init__(self, userArgs):
         self.userArgs = userArgs
-        self.normalize_url()
+        self.url = self.normalize_url(userArgs["url"])
+        self.word_list_path = userArgs["wordListPath"]
+        self.status_codes = {200, 201, 204, 301, 302, 307, 401, 403}
+        
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (BrefTool/Optimized)'
+        })
+        
+        self.max_workers = self.calculate_workers(userArgs["speed"])
 
-    def normalize_url(self):
-        parsed = urlparse(self.url)
+    def calculate_workers(self, level):
+        mapping = {1: 10, 2: 25, 3: 50, 4: 100, 5: 200}
+        return mapping.get(level, 25)
+
+    def normalize_url(self, url):
+        parsed = urlparse(url)
         if not parsed.scheme:
-            self.url = f"https://{self.url}"
+            return f"https://{url}"
+        return url
 
-    def check(self, url,payload):
-        fu = urljoin(self.url, payload)
+    def check(self, payload):
+        target_url = ""
         try:
-            r = requests.get(fu, timeout=7, allow_redirects=True)
-            if self.userArgs["type"].lower() == "dir":
+            if self.userArgs["type"] == "dir":
+                target_url = urljoin(self.url, payload)
+            else: 
+                target_url = self.url + payload
+
+            verify_ssl = not self.userArgs["aggressiveMode"]
+            r = self.session.get(target_url, timeout=5, allow_redirects=True, verify=verify_ssl)
+
+            if self.userArgs["type"] == "dir":
                 if r.status_code in self.status_codes:
-                    print(f"[+] {r.status_code} {len(r.text):>6} → {fu}")
-                    #    print(f"{'payload:':>25} {payload}")
+                    print(f"[+] {r.status_code} | Size: {len(r.text):>6} | URL: {target_url}")
                 elif self.userArgs["verbose"]:
-                    print(f"[-] Code: {r.status_code}")
-            elif self.userArgs["type"].lower() == "lfi":
-                if "root:" in r.text: # or len(r.text) > 320
-                    print(f"[+] VULN!: {payload}")
-                    print(f"    length: {len(r.text)} | Status: {r.status_code}")
+                    print(f"[-] {r.status_code} -> {target_url}")
+
+            elif self.userArgs["type"] == "lfi":
+                if "root:x:0:0" in r.text or "win.ini" in r.text:
+                    print(f"[!!!] LFI VULN FOUND: {payload}")
+                    print(f"      Size: {len(r.text)} | Status: {r.status_code}")
                 elif self.userArgs["verbose"]:
-                    print(f"[-] Code: {r.status_code}")
+                    print(f"[-] {r.status_code} -> {payload}")
+
+        except requests.RequestException:
+            pass
         except Exception as e:
-            print(f"[!]ERROR: {e}")
+            print(f"[!] Error processing {payload}: {e}")
 
+    def get_payload_generator(self):
+        if not os.path.exists(self.word_list_path):
+            print(f"[!] Wordlist not found: {self.word_list_path}")
+            sys.exit(1)
 
-    def lfi_brute(self):
-        print("[+] Entered LFi type attack")
-        with open(self.word_list_path, "r") as f:
-            payloads = [line.strip() for line in f if line.strip()]
+        with open(self.word_list_path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped:
+                    yield stripped
 
-        print(f"[+] Payload lines: {len(payloads)}")
+    def run(self):
+        print(f"[+] Target: {self.url}")
+        print(f"[+] Workers: {self.max_workers}")
+        print(f"[+] Attack Type: {self.userArgs['type'].upper()}")
+        print("[+] Starting brute force...\n")
 
-
-        with ThreadPoolExecutor(max_workers=100) as executor:
-            executor.map(lambda p: self.check(self.url, p), payloads)
-
-        # for payload in payloads:
-        #     try:
-        #         r = requests.get(self.url + payload, timeout=5)
-        #         if "root:" in r.text: # or len(r.text) > 320
-        #             print(f"[+] VULN!: {payload}")
-        #             print(f"    length: {len(r.text)} | Status: {r.status_code}")
-        #         else:
-        #             print(f"[-] Code: {r.status_code}")
-        #     except Exception as e:
-        #         print(f"[!]ERROR: {e}")
-
-    def dir_brute(self):
-        print("[+] Entered DIR type attack")
-        with open(self.word_list_path, "r") as f:
-            payloads = [line.strip() for line in f if line.strip()]
-
-        print(f"[+] Payload lines: {len(payloads)}")
-
-        with ThreadPoolExecutor(max_workers=100) as executor:
-            executor.map(lambda p: self.check(self.url, p), payloads)
-
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            try:
+                executor.map(self.check, self.get_payload_generator())
+            except KeyboardInterrupt:
+                print("\n[!] Stopping workers...")
+                executor.shutdown(wait=False)
+                raise
 
 def main():
     try:
         userArgs = GetUserInput()
-        force = Force(userArgs["url"], userArgs["wordListPath"], userArgs)
-        if userArgs["type"].lower() == "dir":
-            force.dir_brute()
-        elif userArgs["type"].lower() == "lfi":
-            force.lfi_brute()
-        else:
-            print(f"[!] ERROR: {userArgs["type"]} attack type not exist")
+        force = Force(userArgs)
+        force.run()
     except KeyboardInterrupt:
-        print("EXIT...")
-        sys.exit(1)
+        print("\n[!] User aborted. Exiting...")
+        sys.exit(0)
     except Exception as e:
-        print(f"[!] ERROR: {e}")
+        print(f"[!] Critical Error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
