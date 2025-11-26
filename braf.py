@@ -71,9 +71,9 @@ class Force:
     def check(self, payload):
         target_url = ""
         try:
-            if self.userArgs["type"] == "dir":
+            if self.userArgs["type"].lower() == "dir":
                 target_url = urljoin(self.url, payload)
-            else: 
+            elif self.userArgs["type"].lower() == "lfi": 
                 target_url = self.url + payload
 
             verify_ssl = not self.userArgs["aggressiveMode"]
