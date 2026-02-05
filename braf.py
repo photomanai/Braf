@@ -31,7 +31,7 @@ def GetUserInput():
         metavar="LEVEL",
         help="Speed level: 1-5 (default: 2)",
     )
-    parser.add_argument("-A", "--attackType", type=str, default="dir", choices=["dir", "lfi"], help="Attack Type: dir, lfi (default: dir)")
+    parser.add_argument("-A", "--attackType", type=str, default="dir", choices=["dir", "lfi","sub"], help="Attack Type: dir, lfi, sub (default: dir)")
     
     args = parser.parse_args()
 
@@ -47,7 +47,10 @@ def GetUserInput():
 class Force:
     def __init__(self, userArgs):
         self.userArgs = userArgs
-        self.url = self.normalize_url(userArgs["url"])
+        if self.userArgs["type"].lower() == "sub":
+            self.url = self.normalize_url_for_sub(userArgs["url"])
+        else:
+            self.url = self.normalize_url(userArgs["url"])
         self.word_list_path = userArgs["wordListPath"]
         self.status_codes = {200, 201, 204, 301, 302, 307, 401, 403}
         
@@ -68,6 +71,12 @@ class Force:
             return f"https://{url}"
         return url
 
+    def normalize_url_for_sub(self,url):
+        for prefix in ["https://", "http://"]:
+            if url.startswith(prefix):
+                return url[len(prefix):]
+        return url
+
     def check(self, payload):
         target_url = ""
         try:
@@ -75,22 +84,30 @@ class Force:
                 target_url = urljoin(self.url, payload)
             elif self.userArgs["type"].lower() == "lfi": 
                 target_url = self.url + payload
+            elif self.userArgs["type"].lower() == "sub":
+                target_url = "https://" + payload + "." + self.url
 
             verify_ssl = not self.userArgs["aggressiveMode"]
             r = self.session.get(target_url, timeout=5, allow_redirects=True, verify=verify_ssl)
 
-            if self.userArgs["type"] == "dir":
+            if self.userArgs["type"].lower() == "dir":
                 if r.status_code in self.status_codes:
                     print(f"[+] {r.status_code} | Size: {len(r.text):>6} | URL: {target_url}")
                 elif self.userArgs["verbose"]:
                     print(f"[-] {r.status_code} -> {target_url}")
 
-            elif self.userArgs["type"] == "lfi":
+            elif self.userArgs["type"].lower() == "lfi":
                 if "root:x:0:0" in r.text or "win.ini" in r.text:
                     print(f"[!!!] LFI VULN FOUND: {payload}")
                     print(f"      Size: {len(r.text)} | Status: {r.status_code}")
                 elif self.userArgs["verbose"]:
                     print(f"[-] {r.status_code} -> {payload}")
+            
+            elif self.userArgs["type"].lower() == "sub":
+                if r.status_code in self.status_codes:
+                    print(f"[+] {r.status_code} | Size: {len(r.text):>6} | URL: {target_url}")
+                elif self.userArgs["verbose"]:
+                    print(f"[-] {r.status_code} -> {target_url}")
 
         except requests.RequestException:
             pass
